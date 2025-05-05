@@ -1,3 +1,8 @@
+:::{note} Last update 👈
+:class: dropdown
+David Palecek, April 10, 2025
+:::
+
 # Marine Omics Demos
 
 ![Jupyterlab](https://img.shields.io/badge/Jupyter-notebook-brightgreen)

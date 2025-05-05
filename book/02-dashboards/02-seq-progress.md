@@ -12,9 +12,14 @@ kernelspec:
   name: python3
 ---
 
+:::{note} Last update 👈
+:class: dropdown
+David Palecek, May 5, 2025
+:::
+
 # EMO-BON sequencing progress
 
-Sequencing workflow uses [metaGOflow](https://doi.org/10.1093/gigascience/giad078) pipeline, which provides both taxonomic and functional outputs
+Sequencing workflow uses [metaGOflow](https://doi.org/10.1093/gigascience/giad078) pipeline, which provides both taxonomic and functional outputs.
 
 Here is the map of current European marine stations participating in sampling. The merged points likely means that the station collect both water column and sediment samples at slightly different locations.
 

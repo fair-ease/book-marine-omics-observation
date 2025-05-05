@@ -2,7 +2,7 @@
 version: 1
 project:
   id: uc513-marine-omics-observation
-  title: My FAIR-EASE Book
+  title: Marine Omics Observation
   description: Description of data and analysis products for EMO-BON marine metagenomics sampling.
   github: https://github.com/fair-ease/book-marine-omics-observation
   jupyter:
