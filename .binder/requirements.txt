@@ -2,9 +2,12 @@ ipyleaflet
 ipywidgets
 ipykernel
 matplotlib
-momics @ git+https://github.com/emo-bon/marine-omics-methods.git@v0.1.0
+momics @ git+https://github.com/emo-bon/marine-omics-methods.git@v0.1.5
 networkx
 numpy
 pandas
 plotly
+py-udal-mgo @ git+https://github.com/fair-ease/py-udal-mgo.git@main
+scikit-bio
+scipy
 seaborn
