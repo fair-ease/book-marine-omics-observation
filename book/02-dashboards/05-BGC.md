@@ -1,9 +1,9 @@
+# Biosynthetic Gene Clusters (BGCs)
+
 :::{note} Last update 👈
 :class: dropdown
 David Palecek, May 5, 2025
 :::
-
-# Biosynthetic Gene Clusters (BGCs)
 
 BGCs are found using GECCO tool on the assembled contigs (fasta files) which can be invoked from the dashboard at Galaxy. Another dashboard is used to retrieve and visualize the results.
 

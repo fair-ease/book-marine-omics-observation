@@ -1,9 +1,9 @@
+# r-/K- microbial communities
+
 :::{note} Last update 👈
 :class: dropdown
 David Palecek, May 5, 2025
 :::
-
-# r-/K- microbial communities
 
 r and K strategies refer to how organisms adapt to their environment, particularly regarding growth and resource competition. R-selected species are typically fast-growing and opportunistic, thriving in unstable environments with abundant resources, while K-selected species are slow-growing and competitive, doing well in stable, resource-limited environments with high population densities.
 

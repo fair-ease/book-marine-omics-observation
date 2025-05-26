@@ -1,9 +1,9 @@
+# Genetic Diversity
+
 :::{note} Last update 👈
 :class: dropdown
 David Palecek, May 5, 2025
 :::
-
-# Genetic Diversity
 
 Diversity dashboards currently summarize first 181 EMO-BON sampling events. They are split into two separate dashboards because of memory limits of the free (Binder or Colab) environments, but in principle they provide complementary functionality.
 

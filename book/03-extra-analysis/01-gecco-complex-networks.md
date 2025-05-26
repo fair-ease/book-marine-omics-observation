@@ -12,12 +12,12 @@ kernelspec:
   name: python3
 ---
 
+# GECCO analysis over time (EXAMPLE)
+
 :::{note} Last update 👈
 :class: dropdown
 David Palecek, April 22, 2025
 :::
-
-# GECCO analysis over time (EXAMPLE)
 
 This is far from perfect example, but the point being that that treating the EMO-BON samplings as *complex networks*, ie. graphs provides advantages on how to compare the results over time and space.
 

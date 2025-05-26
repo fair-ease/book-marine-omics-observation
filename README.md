@@ -20,7 +20,7 @@ Run a local server:
 cd book/
 
 # preferrably use mystd, since it is used for deployment.
-mystd start --execute
+myst start --execute
 
 # using jupyter
 jupyter book start --execute

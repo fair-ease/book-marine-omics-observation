@@ -1,9 +1,9 @@
+# Integrate MGnify API for data access
+
 :::{note} Last update 👈
 :class: dropdown
 David Palecek, May 5, 2025
 :::
-
-# Integrate MGnify API for data access
 
 Request data from the MGnify database for comparative analysis.
 

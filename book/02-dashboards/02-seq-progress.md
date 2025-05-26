@@ -12,12 +12,12 @@ kernelspec:
   name: python3
 ---
 
+# EMO-BON sequencing progress
+
 :::{note} Last update 👈
 :class: dropdown
 David Palecek, May 5, 2025
 :::
-
-# EMO-BON sequencing progress
 
 Sequencing workflow uses [metaGOflow](https://doi.org/10.1093/gigascience/giad078) pipeline, which provides both taxonomic and functional outputs.
 

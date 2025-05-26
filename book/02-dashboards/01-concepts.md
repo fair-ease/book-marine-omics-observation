@@ -1,9 +1,9 @@
+# Marine Omics Demos
+
 :::{note} Last update 👈
 :class: dropdown
 David Palecek, April 10, 2025
 :::
-
-# Marine Omics Demos
 
 ![Jupyterlab](https://img.shields.io/badge/Jupyter-notebook-brightgreen)
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/emo-bon/momics-demos/HEAD)
