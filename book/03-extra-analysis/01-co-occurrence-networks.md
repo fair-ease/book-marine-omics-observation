@@ -156,7 +156,7 @@ ssu_pivot.head()
 
 The `pivot_taxonomic_data` can normalize or rarefy the table too, but split these steps, because of additional removal of low abundance taxa which needs to happen before normalizing/rarefying.
 
-## 4. Remove low abundance taxa
+## 4. Remove low prevalence taxa
 
 The cutoff selected here is 10 %, which means that all taxa which do not appear at least in 10 % of all the samples in the taxonomy table will be removed.
 
