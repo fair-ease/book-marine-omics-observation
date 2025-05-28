@@ -16,7 +16,7 @@ kernelspec:
 
 :::{note} Last update 👈
 :class: dropdown
-David Palecek, May 27, 2025
+David Palecek, May 28, 2025
 :::
 
 Complex networks provide metrics and to identify kestone species bridges/bottleneck species within the community. EMO-BON data are unified in methods but highly diverse in respect to the metadata (sampling station, temperature, season etc.), which can be interpreted as control/treatment. To refrase a particular question in respect to seasonality, is there structural difference in taxonomy buildup in the communities between spring, summer, autumn and winter.
@@ -27,17 +27,16 @@ We will construct association matrices between taxa over the series of sampling 
 
 1. Load data
 2. Remove high taxa (non-identified sequences)
-3. Pivot table from sampling events to taxonomies.
+3. Pivot table from sampling events to taxa.
 4. Remove low abundance taxa
 5. Rarefy, or normalize
 6. Remove replicates
 7. Split to groups on chosen `factor`
 8. Calculate associations (Bray-curits dissimilarity, Spearman's correlation, etc.)
-9. Build network per group
-10. Identify positive and negative associations
-11. Downstream analysis
+9. False discovery rate correction
+10. Build and analyse network per group
 
-## Loading data and metadata
+## 1. Loading data and metadata
 
 ```{code-cell}
 :label: import
@@ -57,6 +56,18 @@ from momics.taxonomy import (
     pivot_taxonomic_data,
     separate_taxonomy)
 from skbio.diversity import beta_diversity
+from momics.taxonomy import (
+    remove_high_taxa,
+    pivot_taxonomic_data,
+    prevalence_cutoff,
+    rarefy_table,
+    split_metadata,
+    split_taxonomic_data,
+    split_taxonomic_data_pivoted,
+    compute_bray_curtis,
+    fdr_pvals,
+)
+from momics.networks import interaction_to_graph, interaction_to_graph_with_pvals
 
 from mgo.udal import UDAL
 
@@ -68,7 +79,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 ```
 
-All the methods (eventually will be refactored to the marine-momics-methods) are for now defined here
+All the methods which are not part of `marine-omics` package are defined below. Documnetation and context for the `marine-omics (momics)` methods can be found on [readthedocs.io](https://marine-omics-methods.readthedocs.io/en/latest/index.html).
 
 ```{code-cell}
 :label: methods
@@ -89,341 +100,6 @@ def get_valid_samples():
         url, header=0, index_col=0,
     )
     return df_valid
-
-
-def remove_high_taxa(df: pd.DataFrame, tax_level: str = 'phylum') -> pd.DataFrame:
-    """
-    Remove high level taxa from the dataframe.
-
-    Args:
-        df (pd.DataFrame): DataFrame containing taxonomic data.
-        tax_level (str): The taxonomic level to filter by (e.g., 'phylum', 'class', 'order', etc.).
-
-    Returns:
-        pd.DataFrame: DataFrame with rows where the specified taxonomic level is not None.
-    """
-    if tax_level not in df.columns:
-        raise ValueError(f"Taxonomic level '{tax_level}' not found in DataFrame.")
-    
-    # Filter out rows where the taxonomic level is None or NaN
-    return df[~df[tax_level].isna()].copy()
-
-
-def pivot_taxonomic_data(df: pd.DataFrame, normalize: str = None, rarefy_depth: int = None) -> pd.DataFrame:
-    """
-    Prepares the taxonomic data (LSU and SSU tables) for analysis. Apart from
-    pivoting.
-    
-    Normalization of the pivot is optional. Methods include:
-    - None: no normalization.
-    - 'tss_sqrt': Total Sum Scaling and Square Root Transformation.
-    - 'rarefy': rarefaction to a specified depth, if None, min of sample sums is used.
-
-    TODO: refactor scaling to a new method and offer different options.
-
-    Args:
-        df (pd.DataFrame): The input DataFrame containing taxonomic information.
-        normalize (str, optional): Normalization method.
-            Options: None, 'tss_sqrt', 'rarefy'. Defaults to None.
-        rarefy_depth (int, optional): Depth for rarefaction. If None, uses min sample sum.
-            Defaults to None.
-
-    Returns:
-        pd.DataFrame: A pivot table with taxonomic data.
-    """
-    # Select relevant columns
-    df['taxonomic_concat'] = (
-        df['ncbi_tax_id'].astype(str) + 
-        ';sk_' + df['superkingdom'].fillna('') + 
-        ';k_' + df['kingdom'].fillna('') + 
-        ';p_' + df['phylum'].fillna('') + 
-        ';c_' + df['class'].fillna('') + 
-        ';o_' + df['order'].fillna('') + 
-        ';f_' + df['family'].fillna('') + 
-        ';g_' + df['genus'].fillna('') + 
-        ';s_' + df['species'].fillna('')
-    )
-    pivot_table = df.pivot_table(
-        index=['ncbi_tax_id','taxonomic_concat'], 
-        columns='ref_code', 
-        values='abundance',
-    ).fillna(0).astype(int)
-    pivot_table = pivot_table.reset_index()
-    # change inex name
-    pivot_table.columns.name = None
-
-    # normalize values
-    if normalize == 'tss_sqrt':
-        # Total Sum Scaling and Square Root Transformation
-        pivot_table.iloc[:, 2:] = pivot_table.iloc[:, 2:].apply(lambda x: x / x.sum())
-        pivot_table.iloc[:, 2:] = pivot_table.iloc[:, 2:].apply(lambda x: np.sqrt(x))
-    elif normalize == 'rarefy':
-        # rarefy
-        pivot_table.iloc[:, 2:] = rarefy_table(pivot_table.iloc[:, 2:], depth=rarefy_depth)
-    else:
-        # no normalization
-        pass
-    return pivot_table
-
-
-def prevalence_cutoff(df: pd.DataFrame, percent: float = 10, skip_columns: int = 2) -> pd.DataFrame:
-    """
-    Apply a prevalence cutoff to the DataFrame, removing features that do not
-    appear in at least a certain percentage of samples.
-    This is useful for filtering out low-prevalence features that may not be
-    biologically relevant.
-
-    Args:
-        df (pd.DataFrame): The input DataFrame containing feature abundances.
-        percent (float): The prevalence threshold as a percentage.
-        skip_columns (int): The number of columns to skip (e.g., taxonomic information).
-
-    Returns:
-        pd.DataFrame: A filtered DataFrame with low-prevalence features removed.
-    """
-    # Calculate the number of samples
-    num_samples = df.shape[1] - skip_columns
-    # Calculate the prevalence threshold
-    threshold = (percent / 100) * num_samples
-    # Filter features based on prevalence
-    filtered = df.loc[df.iloc[:, skip_columns:].gt(0).sum(axis=1) >= threshold]
-    # Reset the index
-    filtered = filtered.reset_index(drop=True)
-    return filtered
-
-
-def rarefy_table(df: pd.DataFrame, depth: int = None, axis: int = 1) -> pd.DataFrame:
-    """
-    Rarefy an abundance table to a given depth. If depth is None, uses the
-    minimum sample sum across all samples.
-    This function is a wrapper around the skbio.stats.subsample_counts function.
-    
-    Args:
-        df: pd.DataFrame (rows: features, columns: samples)
-        depth: int or None, rarefaction depth. If None, uses min sample sum.
-        axis: int, 1 for samples in columns, 0 for samples in rows.
-
-    Returns:
-        pd.DataFrame: A rarefied DataFrame.
-    """
-    if axis == 1:
-        sample_sums = df.sum(axis=0)
-    else:
-        sample_sums = df.sum(axis=1)
-    if depth is None:
-        depth = sample_sums.min()
-    rarefied = {}
-    print("Minimum rarefaction depth:", depth)
-    for sample in df.columns if axis == 1 else df.index:
-        counts = df[sample].values if axis == 1 else df.loc[sample].values
-        if sample_sums[sample] < depth:
-            # Not enough counts, fill with NaN or zeros
-            rarefied[sample] = np.full_like(counts, np.nan)
-        else:
-            rarefied_counts = subsample_counts(counts.astype(int), int(depth))
-            rarefied[sample] = rarefied_counts
-    if axis == 1:
-        return pd.DataFrame(rarefied, index=df.index)
-    else:
-        return pd.DataFrame(rarefied, columns=df.columns)
-
-
-def split_metadata(metadata: pd.DataFrame, factor: str) -> Dict[str, list]:
-    """
-    Splits the metadata ref codes to dictionary of key being the factor value and
-    value is a list of the ref codes.
-
-    Args:
-        metadata (pd.DataFrame): The input DataFrame containing metadata.
-        factor (str): The column name to split the metadata by.
-    Returns:
-        Dict[str, list]: A dictionary with keys as unique values of the factor and
-                         values as lists of ref codes.
-    """
-    if factor not in metadata.columns:
-        raise ValueError(f"Factor '{factor}' not found in DataFrame columns.")
-    # check if column is categorical
-    if not isinstance(metadata[factor].dtype, pd.CategoricalDtype):
-        raise ValueError(f"Column '{factor}' is not categorical (object dtype).")
-    
-    # for each unique value in the factor column, create a new table and append to a dictionary
-    grouped_data = {}
-    for value in metadata[factor].unique():
-        # filter the dataframe
-        filtered_df = metadata[metadata[factor] == value]
-        # get the ref codes
-        ref_codes = filtered_df['ref_code'].tolist()
-        # add to the dictionary
-        grouped_data[value] = ref_codes
-    
-    return grouped_data
-
-
-def split_taxonomic_data_pivoted(taxonomy: pd.DataFrame, groups: Dict[str, list]) -> Dict[str, pd.DataFrame]:
-    """
-    Splits the taxonomic data into dictionary of DataFrames for each group.
-    The split is based on the column names which need to match between the taxonomy DataFrame
-    and the groups lists. The DataFrame should have a 'ncbi_tax_id' and 'taxonomic_concat' which 
-    will serve as index of the resulting DataFrames.
-    
-    Args:
-        taxonomy (pd.DataFrame): The input DataFrame containing taxonomic information.
-        groups (Dict[str, list]): A dictionary where keys are unique values of a factor
-            which correspond to the groups to split by.
-
-    Returns:
-        Dict[str, pd.DataFrame]: A dictionary with keys as unique values of the factor and
-                                 values as DataFrames with separate columns for each taxonomic rank.
-    """
-    if not isinstance(groups, dict):
-        raise ValueError("Groups must be a dictionary.")
-
-    # for each unique value in the factor column, create a new table and append to a dictionary
-    grouped_data = {}
-    for value, ref_codes in groups.items():
-        # filter the dataframe
-        filtered_df = taxonomy[['ncbi_tax_id', 'taxonomic_concat'] + ref_codes]
-        # remove rows with all zeros and print how many rows were removed
-        len_before = len(filtered_df)
-        filtered_df = filtered_df[filtered_df[ref_codes].sum(axis=1) != 0]
-        len_after = len(filtered_df)
-        print(f"Removed {len_before - len_after} rows with all zeros for {value}.")
-        # check if the dataframe is empty
-        if filtered_df.empty:
-            print(f"Warning: No data for {value} in the taxonomic data.")
-            continue
-        # cprint how many rows were removed
-
-        # add to the dictionary
-        grouped_data[value] = filtered_df
-    
-    return grouped_data
-
-
-def compute_bray_curtis(df: pd.DataFrame, skip_cols: int = 2, direction: str = 'samples') -> pd.DataFrame:
-    """
-    Compute Bray-Curtis dissimilarity and return as a pandas DataFrame.
-    This function computes the Bray-Curtis dissimilarity for samples in the DataFrame.
-
-    Args:
-        df (pd.DataFrame): The input DataFrame containing sample counts.
-        skip_cols (int): Number of columns to skip (e.g., taxonomic information).
-        direction (str): Direction of the dissimilarity calculation, 'samples' or 'taxa'.
-    
-    Returns:
-        pd.DataFrame: A DataFrame containing the Bray-Curtis dissimilarity matrix.
-    """
-    if direction not in ['samples', 'taxa']:
-        raise ValueError("Direction must be either 'samples' or 'taxa'.")
-
-    if direction == 'samples':
-        # Use the sample IDs as the index
-        ids = df.columns[skip_cols:].astype(str).tolist()
-        result = beta_diversity(
-            metric='braycurtis',
-            counts=df.iloc[:, skip_cols:].T,
-            ids=ids
-        )
-    elif direction == 'taxa':
-        ids = df['ncbi_tax_id'].astype(str).tolist()
-        result = beta_diversity(
-            metric='braycurtis',
-            counts=df.iloc[:, skip_cols:],
-            ids=ids
-        )
-
-    
-    bray_curtis_df = pd.DataFrame(
-        result.data,
-        index=ids,
-        columns=ids
-    )
-    return bray_curtis_df
-
-
-def fdr_pvals(p_spearman_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Apply FDR correction to the p-values DataFrame using Benjamini/Hochberg (non-negative)
-    method. This function extracts the upper triangle of the p-values DataFrame.
-    
-    Args:
-        p_spearman_df (pd.DataFrame): DataFrame containing p-values.
-    
-    Returns:
-        pd.DataFrame: DataFrame with FDR corrected p-values.
-    """
-    # Extract upper triangle p-values
-    pval_array = p_spearman_df.where(np.triu(np.ones(p_spearman_df.shape), k=1).astype(bool)).stack().values
-
-    # Apply FDR correction
-    _rejected, pvals_corrected, _, _ = multipletests(pval_array, alpha=0.05, method='fdr_bh')
-
-    # Map corrected p-values back to a DataFrame
-    pvals_fdr = p_spearman_df.copy()
-    pvals_fdr.values[np.triu_indices_from(p_spearman_df, k=1)] = pvals_corrected
-    pvals_fdr.values[np.tril_indices_from(p_spearman_df, k=0)] = np.nan  # Optional: keep only upper triangle
-    return pvals_fdr
-
-
-def interaction_to_graph(df, pos_cutoff=0.8, neg_cutoff=-0.6):
-    """
-    Create a network from the correlation matrix.
-    Args:
-        df (pd.DataFrame): The input DataFrame containing correlation values.
-        pos_cutoff (float): Positive correlation cutoff.
-        neg_cutoff (float): Negative correlation cutoff.
-    Returns:
-        nodes (list): List of node indices.
-        edges_pos (list): List of positive edges.
-        edges_neg (list): List of negative edges.
-    """
-    nodes, edges_pos, edges_neg = [], [], []
-    count_pos, count_neg = 0, 0
-    cols = df.columns.tolist()
-    for i in range(df.shape[0]):
-        nodes.append(cols[i])
-        for j in range(i+1, df.shape[1]):
-            if df.iloc[i, j] > pos_cutoff:
-                edges_pos.append((cols[i], cols[j]))
-                count_pos += 1
-            # print(f"Sample {i} and Sample {j} have a high correlation of {df.iloc[i, j]}")
-            elif df.iloc[i, j] < neg_cutoff:
-                edges_neg.append((cols[i], cols[j]))
-                count_neg += 1
-                # print(f"Sample {i} and Sample {j} have a high negative correlation of {df.iloc[i, j]}")
-    print(f"Number of positive edges: {count_pos}")
-    print(f"Number of negative edges: {count_neg}")
-    return nodes, edges_pos, edges_neg
-
-
-def interaction_to_graph_with_pvals(df, pvals_df, pos_cutoff=0.8, neg_cutoff=-0.6, p_val_cutoff=0.05):
-    """
-    Create a network from the correlation matrix and p-values.
-    Args:
-        df (pd.DataFrame): The input DataFrame containing correlation values.
-        pvals_df (pd.DataFrame): The DataFrame containing p-values.
-        pos_cutoff (float): Positive correlation cutoff.
-        neg_cutoff (float): Negative correlation cutoff.
-    Returns:
-        nodes (list): List of node indices.
-        edges_pos (list): List of positive edges with p-values.
-        edges_neg (list): List of negative edges with p-values.
-    """
-    nodes, edges_pos, edges_neg = [], [], []
-    count_pos, count_neg = 0, 0
-    cols = df.columns.tolist()
-    for i in range(df.shape[0]):
-        nodes.append(cols[i])
-        for j in range(i+1, df.shape[1]):
-            if df.iloc[i, j] > pos_cutoff and pvals_df.iloc[i, j] < p_val_cutoff:
-                edges_pos.append((cols[i], cols[j]))
-                count_pos += 1
-            elif df.iloc[i, j] < neg_cutoff and pvals_df.iloc[i, j] < p_val_cutoff:
-                edges_neg.append((cols[i], cols[j]))
-                count_neg += 1
-    print(f"Number of positive edges: {count_pos}")
-    print(f"Number of negative edges: {count_neg}")
-    return nodes, edges_pos, edges_neg
 ```
 
 ```{code-cell}
@@ -461,6 +137,8 @@ isinstance(full_metadata['season'].dtype, pd.CategoricalDtype)
 
 ## 2. Remove high taxa
 
+Because many sequences are not well classified, information that the sequence is from superKingdom Bacteria is not helpful and does not add information value to our analysis. Here we remove all taxa which are only identified on `phylum` level and higher.
+
 ```{code-cell}
 print("Original DataFrame shape:", ssu.shape)
 ssu = remove_high_taxa(ssu, tax_level='phylum')
@@ -469,12 +147,18 @@ print("Filtered DataFrame shape:", ssu.shape)
 
 ## 3. Pivot tables
 
+Pivoting converts taxonomy table which rows contain each taxon identified in every sample to table with rows of unique taxa with columns representing samples and values of abundances per sample.
+
 ```{code-cell}
 ssu_pivot = pivot_taxonomic_data(ssu, normalize=None, rarefy_depth=None)
 ssu_pivot.head()
 ```
 
+The `pivot_taxonomic_data` can normalize or rarefy the table too, but split these steps, because of additional removal of low abundance taxa which needs to happen before normalizing/rarefying.
+
 ## 4. Remove low abundance taxa
+
+The cutoff selected here is 10 %, which means that all taxa which do not appear at least in 10 % of all the samples in the taxonomy table will be removed.
 
 ```{code-cell}
 ssu_filt = prevalence_cutoff(ssu_pivot, percent=10, skip_columns=2)
@@ -483,21 +167,25 @@ ssu_filt.head()
 
 ## 5. Rarefy or normalize
 
+Many normalization techniques are readily available to mornalize taxonomy data. For the purposes of co-occurrence networks, it is reccomended to rarefy [refs]. Please correct if wrong.
+
 ```{code-cell}
 ssu_rarefied = ssu_filt.copy()
 ssu_rarefied.iloc[:, 2:] = rarefy_table(ssu_filt.iloc[:, 2:], depth=None, axis=1)
 ssu_rarefied.head()
 ```
 
-## 6. Remove duplicates
+## 6. Remove replicates
 
-Anything which has count > 1 is replicate of some sort.
+Anything which has count > 1 is replicate of some sort. Note that this information comes from the enhanced metadata information, because `replicate_info` is not in the original metadata. It is a combination of `observatory`, `sample type`, `date`, and `filter` information.
+
+It should be considered to filter replicates before steps 4. and 5. Identify replicates:
 
 ```{code-cell}
 full_metadata['replicate_info'].value_counts()
 ```
 
-Remove them here
+Remove the replicates:
 
 ```{code-cell}
 filtered_metadata = full_metadata.drop_duplicates(subset='replicate_info', keep='first')
@@ -506,7 +194,14 @@ filtered_metadata.shape
 
 ## 7. Split to groups on chosen `factor`
 
-Split metadata to groups
+Split metadata to groups based on unique values in your factor.
+
+::::{caution}
+Even for the case of selected factor of `season`, which has only 4 valid values, the rule of thumb of having 25 samples per group is broken.
+
+Below we only check and remove groups which have only 2 samples, which is too little to calculate any meaningful statistics.
+:class: dropdown
+::::
 
 ```{code-cell}
 FACTOR = 'season'
@@ -523,7 +218,7 @@ for groups_key in list(groups.keys()):
         print(f"Warning: {groups_key} has less than 3 samples, therefore removed.")
 ```
 
-Split pivoted taxonomy data to groups:
+Split pivoted taxonomy data according to groups of `ref_code`s defined above:
 
 ```{code-cell}
 # pivot and filter the ssu
@@ -538,10 +233,9 @@ for key, value in split_taxonomy.items():
 
 print(ssu_rarefied.shape)
 split_taxonomy['Autumn'].iloc[:, 2:].head()
-
 ```
 
-## 8. Calculate associations (Bray-curits dissimilarity and Spearman's)
+## 8. Calculate associations (Bray-curtis and Spearman's)
 
 Bray-curtis dissimilarity:
 
@@ -582,24 +276,26 @@ spearman_taxa['Summer']['correlation'].head()
 
 ## 9. False discovery rate (FDR) correction
 
+### Calculate FDR
+
+We have more than 1000 taxa in the tables, which means 1000*1000 / 2 association values. Too many to statistically trust that any low p-value is not just statistical coincidence. Therefore False Discovery Rate correction is absolutely essential here.
+
 ```{code-cell}
 for factor, d in spearman_taxa.items():
     pvals_fdr = fdr_pvals(d['p_vals'])
     spearman_taxa[factor]['p_vals_fdr'] = pvals_fdr
 ```
 
-Let's crosscheck the shapes of one particular set of DFs for one factor value
+Let's crosscheck one particular set of DFs for one factor value, which should all have the same shape:
 
 ```{code-cell}
 season = 'Summer'
 spearman_taxa[season]['correlation'].shape, spearman_taxa[season]['p_vals'].shape, spearman_taxa[season]['p_vals_fdr'].shape
 ```
 
-We will plot the FDR curve a bit later, patiance please.
+### Display histograms FDR corrected p-values
 
-## 10. Build network per group
-
-Bray-curtis
+For Bray-curtis dissimilarity we plot only the histogram. Does it make sense to do FDR? How?
 
 ```{code-cell}
 # histogram of the correlation values for setting graph cutoffs
@@ -614,7 +310,7 @@ plt.legend()
 plt.show()
 ```
 
-Spearman correlation
+We performed FDR on Spearman's correlations, so both correlation values and FDR curves are displayed.
 
 ```{code-cell}
 # histogram of the correlation values for setting graph cutoffs
@@ -644,10 +340,28 @@ plt.legend()
 plt.show()
 ```
 
-## 11. Identify positive and negative associations (Example)
+The FDR curve shows huge inflation of significant associations if taken from the raw data. How many?
 
 ```{code-cell}
-for factor, df in spearman_taxa.items():
+significant_raw = dict_df['p_vals'].values.flatten() < 0.05
+significant_fdr = dict_df['p_vals_fdr'].values.flatten() < 0.05
+
+removed = np.sum(significant_raw & ~significant_fdr)
+significant = np.sum(significant_fdr)
+
+print(f"Total associations significant before FDR: {np.sum(significant_raw)}")
+print(f"Total associations significant after FDR: {significant}")
+print(f"Associations significant before FDR but not after: {removed}")
+```
+
+## 10. Build network for each factor value group
+
+### Nodes and edges for positive and negative associations (Example)
+
+Example of function generating list of nodes and significant positive/negative edges to construct the graph of.
+
+```{code-cell}
+for factor, dict_df in spearman_taxa.items():
     print(f"factor: {factor}")
     nodes, edges_pos, edges_neg = interaction_to_graph_with_pvals(
         dict_df['correlation'],
@@ -656,11 +370,12 @@ for factor, df in spearman_taxa.items():
         neg_cutoff=-0.5,
         p_val_cutoff=0.05
     )
+    break
 ```
 
-## 12. Downstream analysis
+### Network generation and metrics calculation
 
-We are going to look at:
+At the same time as we generate the graph, we calculate several descriptive metrics of themetwork (implement saving of the network, if you need the graphs for later). We are going to look at:
 
 - `degree centrality`, which measures the number of direct connections a node (taxon) has. High degree centrality suggests a taxon is highly connected and may play a central role in the community. Therefore represents a so called `keystone species`.
 - `betweenness`, which represents how often a node appears on the shortest paths between other nodes. Taxa with high/low betweenness may act as bridges or bottlenecks in the network, respectively.
@@ -705,7 +420,7 @@ for factor, dict_df in spearman_taxa.items():
     network_results[factor]['total_edges'] = G.number_of_edges()
 ```
 
-Compile dataframes from the dictionary, not ideal yet.
+Compile dataframes from the dictionary. The dataframe structure is not ideal yet, feel free to open a PR [here](https://github.com/fair-ease/book-marine-omics-observation/pulls).
 
 ```{code-cell}
 DF = pd.DataFrame(columns=[FACTOR, 'centrality', 'top_betweenness', 'bottom_betweenness', 'total_nodes', 'total_edges'])
@@ -736,13 +451,13 @@ for factor, dict_results in network_results.items():
 df_centrality
 ```
 
-The node number identifiers correspond to the NCBI tax_id. Is any node shared in the high centrality table?
+The node identifiers correspond to the NCBI tax_id. Is any node shared in the high centrality table?
 
 ```{code-cell}
 sum(df_centrality['node'].value_counts() > 1)
 ```
 
-Whole table
+Whole table looks like this
 
 ```{code-cell}
 DF.head()
@@ -845,6 +560,10 @@ plt.tight_layout()
 plt.show()
 ```
 
+If you do not do the FDR and remove high taxa, the networks will be hard to distinguis visually, mostly because of all the false positive association hits. Quite surprisingly, out of 1000*1000 tables, we get a clear visual separation of the community interaction patterns.
+
 ## Summary
 
 None of this answers any of the possible question you want to ask, but with the growing literature applying complex network methods to metagenomics data in combination of unique unified sampling and sequencing approach by EMO-BON, this dataset is ideal to push the boundaries of monitoring using the above described tool set.
+
+Factors can be any categorical variable from the metadata table. However alternative approach to color and evaluate the associations is to color the graph but some knowledge about the taxa, such r- or K- community species classification etc.
