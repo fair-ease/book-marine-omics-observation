@@ -2,7 +2,7 @@ ipyleaflet
 ipywidgets
 ipykernel
 matplotlib
-marine-omics>=0.1.8
+marine-omics==0.1.10
 networkx
 numpy
 pandas

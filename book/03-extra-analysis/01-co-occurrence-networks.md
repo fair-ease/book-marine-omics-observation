@@ -16,7 +16,7 @@ kernelspec:
 
 :::{note} Last update 👈
 :class: dropdown
-David Palecek, May 28, 2025
+David Palecek, June 23, 2025
 :::
 
 Complex networks provide metrics and to identify kestone species bridges/bottleneck species within the community. EMO-BON data are unified in methods but highly diverse in respect to the metadata (sampling station, temperature, season etc.), which can be interpreted as control/treatment. To refrase a particular question in respect to seasonality, is there structural difference in taxonomy buildup in the communities between spring, summer, autumn and winter.
@@ -65,9 +65,10 @@ from momics.taxonomy import (
     split_taxonomic_data,
     split_taxonomic_data_pivoted,
     compute_bray_curtis,
+    fill_taxonomy_placeholders,
     fdr_pvals,
 )
-from momics.networks import interaction_to_graph, interaction_to_graph_with_pvals
+from momics.networks import interaction_to_graph, interaction_to_graph_with_pvals, pairwise_jaccard_lower_triangle
 
 from mgo.udal import UDAL
 
@@ -137,11 +138,22 @@ isinstance(full_metadata['season'].dtype, pd.CategoricalDtype)
 
 ## 2. Remove high taxa
 
+First infer missing higher taxa if some lower taxon was identified using `unclassified_` placeholder. Example of filled row of taxonomy can look like this:
+
+kingdom phylum	class	order	family	genus	species
+Archaea unclassified_Thaumarchaeota	Thaumarchaeota	unclassified_Cenarchaeales	Cenarchaeales	Cenarchaeaceae	None	None
+
+```{code-cell}
+taxonomy_cols = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+ssu_filled = fill_taxonomy_placeholders(ssu, taxonomy_cols)
+ssu_filled.head(10)
+```
+
 Because many sequences are not well classified, information that the sequence is from superKingdom Bacteria is not helpful and does not add information value to our analysis. Here we remove all taxa which are only identified on `phylum` level and higher.
 
 ```{code-cell}
 print("Original DataFrame shape:", ssu.shape)
-ssu = remove_high_taxa(ssu, tax_level='phylum')
+ssu_filled = remove_high_taxa(ssu_filled, taxonomy_ranks=taxonomy_cols, tax_level='phylum')
 print("Filtered DataFrame shape:", ssu.shape)
 ```
 
@@ -150,7 +162,7 @@ print("Filtered DataFrame shape:", ssu.shape)
 Pivoting converts taxonomy table which rows contain each taxon identified in every sample to table with rows of unique taxa with columns representing samples and values of abundances per sample.
 
 ```{code-cell}
-ssu_pivot = pivot_taxonomic_data(ssu, normalize=None, rarefy_depth=None)
+ssu_pivot = pivot_taxonomic_data(ssu_filled, normalize=None, rarefy_depth=None)
 ssu_pivot.head()
 ```
 
@@ -158,7 +170,7 @@ The `pivot_taxonomic_data` can normalize or rarefy the table too, but split thes
 
 ## 4. Remove low prevalence taxa
 
-The cutoff selected here is 10 %, which means that all taxa which do not appear at least in 10 % of all the samples in the taxonomy table will be removed.
+The cutoff selected here is 10 %, which means that all taxa which do not appear at least in 10 % of all the samples in the taxonomy table will be removed. This doees not refer to low abundance taxa within single samples.
 
 ```{code-cell}
 ssu_filt = prevalence_cutoff(ssu_pivot, percent=10, skip_columns=2)
@@ -177,7 +189,7 @@ ssu_rarefied.head()
 
 ## 6. Remove replicates
 
-Anything which has count > 1 is replicate of some sort. Note that this information comes from the enhanced metadata information, because `replicate_info` is not in the original metadata. It is a combination of `observatory`, `sample type`, `date`, and `filter` information.
+Anything which has `replicate_info` count > 1 is replicate of some sort. Note that this information comes from the enhanced metadata information, because `replicate_info` is not in the original metadata. It is a combination of `observatory`, `sample type`, `date`, and `filter` information.
 
 It should be considered to filter replicates before steps 4. and 5. Identify replicates:
 
@@ -282,15 +294,15 @@ We have more than 1000 taxa in the tables, which means 1000*1000 / 2 association
 
 ```{code-cell}
 for factor, d in spearman_taxa.items():
-    pvals_fdr = fdr_pvals(d['p_vals'])
+    pvals_fdr = fdr_pvals(d['p_vals'], pval_cutoff=0.05)
     spearman_taxa[factor]['p_vals_fdr'] = pvals_fdr
 ```
 
 Let's crosscheck one particular set of DFs for one factor value, which should all have the same shape:
 
 ```{code-cell}
-season = 'Summer'
-spearman_taxa[season]['correlation'].shape, spearman_taxa[season]['p_vals'].shape, spearman_taxa[season]['p_vals_fdr'].shape
+factor = 'Summer'
+spearman_taxa[factor]['correlation'].shape, spearman_taxa[factor]['p_vals'].shape, spearman_taxa[factor]['p_vals_fdr'].shape
 ```
 
 ### Display histograms FDR corrected p-values
@@ -384,7 +396,13 @@ At the same time as we generate the graph, we calculate several descriptive metr
 network_results = {}
 for factor, dict_df in spearman_taxa.items():
     print(f"Factor: {factor}")
-    nodes, edges_pos, edges_neg = interaction_to_graph_with_pvals(dict_df['correlation'], dict_df['p_vals_fdr'], pos_cutoff=0.7, neg_cutoff=-0.5, p_val_cutoff=0.05)
+    nodes, edges_pos, edges_neg = interaction_to_graph_with_pvals(
+        dict_df['correlation'],
+        dict_df['p_vals_fdr'],
+        pos_cutoff=0.7,
+        neg_cutoff=-0.5,
+        p_val_cutoff=0.05,
+    )
 
     G = nx.Graph(
         mode = factor,
@@ -420,6 +438,31 @@ for factor, dict_df in spearman_taxa.items():
     network_results[factor]['total_edges'] = G.number_of_edges()
 ```
 
+### Jaccard similarity of edge sets
+
+Jaccard similarity evaluates pairwise similarity of constructed networks.
+
+For positive edges:
+
+```{code-cell}
+df_jaccard = pairwise_jaccard_lower_triangle(network_results, edge_type='edges_pos')
+df_jaccard
+```
+
+For negative edges:
+
+```{code-cell}
+df_jaccard = pairwise_jaccard_lower_triangle(network_results, edge_type='edges_neg')
+df_jaccard
+```
+
+For all edges altogether:
+
+```{code-cell}
+df_jaccard = pairwise_jaccard_lower_triangle(network_results, edge_type='all')
+df_jaccard
+```
+
 Compile dataframes from the dictionary. The dataframe structure is not ideal yet, feel free to open a PR [here](https://github.com/fair-ease/book-marine-omics-observation/pulls).
 
 ```{code-cell}
@@ -446,8 +489,6 @@ for factor, dict_results in network_results.items():
             'centrality': [centrality]
         })], ignore_index=True)
 
-# Set hierarchical (MultiIndex) with 'factor' above 'node'
-# df_centrality.set_index([FACTOR, 'node'], inplace=True)
 df_centrality
 ```
 
@@ -463,97 +504,19 @@ Whole table looks like this
 DF.head()
 ```
 
-### Jaccard similarity of edge sets
-
-This allows to compare networks pair-wise. Since we implemented coloring of the positive and negative associated edges, we can perfor this 3 times (for total, positive, and negative). Three seasons pair-wise give three nuber as well.
-
-First we calculate all the necessary sets of edges:
-
-```{code-cell}
-# this is a pair-wise comparison of the networks
-edges_summer_pos = set(network_results['Summer']['edges_pos'])
-edges_summer_neg = set(network_results['Summer']['edges_neg'])
-edges_summer_total = set(network_results['Summer']['graph'].edges())
-
-
-edges_autumn_pos = set(network_results['Autumn']['edges_pos'])
-edges_autumn_neg = set(network_results['Autumn']['edges_neg'])
-edges_autumn_total = set(network_results['Autumn']['graph'].edges())
-
-edges_winter_pos = set(network_results['Winter']['edges_pos'])
-edges_winter_neg = set(network_results['Winter']['edges_neg'])
-edges_winter_total = set(network_results['Winter']['graph'].edges())
-```
-
-And now Jaccard distances
-
-```{code-cell}
-print('Analyse edges identified with POSITIVE correlation:')
-print('###########################################')
-intersection = edges_summer_pos & edges_autumn_pos
-union = edges_summer_pos | edges_autumn_pos
-jaccard_similarity = len(intersection) / len(union)
-print(f"Jaccard similarity between Summer and Autumn: {jaccard_similarity:.4f}")
-
-intersection = edges_summer_pos & edges_winter_pos
-union = edges_summer_pos | edges_winter_pos
-jaccard_similarity = len(intersection) / len(union)
-print(f"Jaccard similarity between Summer and Winter: {jaccard_similarity:.4f}")
-
-intersection = edges_autumn_pos & edges_winter_pos
-union = edges_autumn_pos | edges_winter_pos
-jaccard_similarity = len(intersection) / len(union)
-print(f"Jaccard similarity between Autumn and Winter: {jaccard_similarity:.4f}\n")
-
-
-print('Analyse all edges:')
-print('###########################################')
-intersection = edges_summer_total & edges_autumn_total
-union = edges_summer_total | edges_autumn_total
-jaccard_similarity = len(intersection) / len(union)
-print(f"Jaccard similarity between Summer and Autumn: {jaccard_similarity:.4f}")
-
-intersection = edges_summer_total & edges_winter_total
-union = edges_summer_total | edges_winter_total
-jaccard_similarity = len(intersection) / len(union)
-print(f"Jaccard similarity between Summer and Winter: {jaccard_similarity:.4f}")
-
-intersection = edges_autumn_total & edges_winter_total
-union = edges_autumn_total | edges_winter_total
-jaccard_similarity = len(intersection) / len(union)
-print(f"Jaccard similarity between Autumn and Winter: {jaccard_similarity:.4f}\n")
-
-
-print('Analyse edges identified with NEGATIVE correlation:')
-print('###########################################')
-intersection = edges_summer_neg & edges_autumn_neg
-union = edges_summer_neg | edges_autumn_neg
-jaccard_similarity = len(intersection) / len(union)
-print(f"Jaccard similarity between Summer and Autumn: {jaccard_similarity:.4f}")
-
-intersection = edges_summer_neg & edges_winter_neg
-union = edges_summer_neg | edges_winter_neg
-jaccard_similarity = len(intersection) / len(union)
-print(f"Jaccard similarity between Summer and Winter: {jaccard_similarity:.4f}")
-
-intersection = edges_autumn_neg & edges_winter_neg
-union = edges_autumn_neg | edges_winter_neg
-jaccard_similarity = len(intersection) / len(union)
-print(f"Jaccard similarity between Autumn and Winter: {jaccard_similarity:.4f}\n")
-```
-
 ### Graph example visualization
 
 ```{code-cell}
+alpha = 0.5
 fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
-for ax, season in zip(axes, ['Summer', 'Autumn', 'Winter']):
-    G = network_results[season]['graph']
+for ax, factor in zip(axes, list(bray_taxa.keys())):
+    G = network_results[factor]['graph']
     colors = nx.get_edge_attributes(G, 'color')
     pos = nx.spring_layout(G, k=0.2, iterations=50, seed=42)
-    nx.draw_networkx_nodes(G, pos, ax=ax, alpha=0.2, node_color='grey', node_size=15)
-    nx.draw_networkx_edges(G, pos, ax=ax, alpha=0.2, edge_color=list(colors.values()))
-    ax.set_title(season)
+    nx.draw_networkx_nodes(G, pos, ax=ax, alpha=alpha, node_color='grey', node_size=17)
+    nx.draw_networkx_edges(G, pos, ax=ax, alpha=alpha-0.3, edge_color=list(colors.values()))
+    ax.set_title(factor)
     ax.axis('off')
 
 plt.tight_layout()
