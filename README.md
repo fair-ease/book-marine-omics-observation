@@ -1,4 +1,4 @@
-# FAIRE-EASE Jupyterbook on Marine Omics pilot
+# FAIR-EASE Jupyterbook on Marine Omics pilot
 
 Go directly to the deployed [book](https://lab.fairease.eu/book-marine-omics-observation/).
 
