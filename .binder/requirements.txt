@@ -12,3 +12,4 @@ py-udal-mgo @ git+https://github.com/fair-ease/py-udal-mgo.git@main
 scikit-bio
 scipy
 seaborn
+venny4py

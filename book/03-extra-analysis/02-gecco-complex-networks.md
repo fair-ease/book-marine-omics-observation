@@ -63,7 +63,7 @@ def bgc_tables_dict(tsv_names: list):
     tables_dict = {}
     for name in tsv_names:
         try:
-            url = f"https://raw.githubusercontent.com/fair-ease/doc-jupyterbook-mgo/refs/heads/main/book/assets/data/gecco_clusters/{name}_final.contigs.clusters.tsv"
+            url = f"https://raw.githubusercontent.com/fair-ease/book-marine-omics-observation/refs/heads/main/book/assets/data/gecco_clusters/{name}_final.contigs.clusters.tsv"
             df = pd.read_csv(url, sep="\t", header=0, index_col=0)
             tables_dict[name] = df
         except Exception as e:

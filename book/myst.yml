@@ -31,5 +31,6 @@ site:
   options:
     favicon: https://fairease.eu//themes/fairease/favicon.ico
     logo: ../logo.png
-    # extra_css:
-    #   - custom.css
+    assets:
+      - custom.css
+
