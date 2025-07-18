@@ -1,6 +1,7 @@
 ipyleaflet
 ipywidgets
 ipykernel
+jsonapi_client
 matplotlib
 marine-omics==0.1.10
 networkx

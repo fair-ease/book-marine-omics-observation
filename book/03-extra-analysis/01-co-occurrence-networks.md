@@ -39,7 +39,6 @@ We will construct association matrices between taxa over the series of sampling 
 ## 1. Loading data and metadata
 
 ```{code-cell}
-:label: import
 :class: dropdown
 import os
 from typing import Dict
@@ -86,15 +85,6 @@ All the methods which are not part of `marine-omics` package are defined below. 
 :label: methods
 :class: dropdown
 
-def get_data():
-    return load_parquets_udal()
-
-
-# Load and merge metadata
-def get_full_metadata():
-    return get_metadata_udal()
-
-
 def get_valid_samples():
     url = "https://raw.githubusercontent.com/emo-bon/momics-demos/refs/heads/main/data/shipment_b1b2_181.csv"
     df_valid = pd.read_csv(
@@ -105,13 +95,13 @@ def get_valid_samples():
 
 ```{code-cell}
 # Load metadata
-full_metadata = get_full_metadata()
+full_metadata = get_metadata_udal()
 
 # filter the metadata only for valid 181 samples
 valid_samples = get_valid_samples()
 full_metadata = enhance_metadata(full_metadata, valid_samples)
 
-mgf_parquet_dfs = get_data()
+mgf_parquet_dfs = load_parquets_udal()
 ssu = mgf_parquet_dfs['ssu']
 ssu.head()
 ```

@@ -42,7 +42,6 @@ GECCO version 0.9.10, default parameters.
 ## Loading data and metadata
 
 ```{code-cell}
-:label: import-load
 :class: dropdown
 import pandas as pd
 from momics.loader import bytes_to_df
