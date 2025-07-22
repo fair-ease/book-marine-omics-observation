@@ -1,21 +1,30 @@
-# Marine Omics Demos
+---
+title: EMO-BON data analysis kit
+authors:
+  - David Palecek
+---
 
-:::{note} Last update 👈
-:class: dropdown
-David Palecek, April 10, 2025
-:::
+## General Principles
+
+The data analysis kit is continuously integrated set of tools which provide versatile and deployable
+
+1. Data explorer and subsetting We foresee to develop 3 distinct end-user facing apps.
+2. Diverse visualization and analysis dashboards, which can be also run interactively as standard `jupyter` notebooks.
+3. Other example analysis pipelines which integrate additional tools and datasets, such as those in [MGnify](https://www.ebi.ac.uk/metagenomics)
 
 ![Jupyterlab](https://img.shields.io/badge/Jupyter-notebook-brightgreen)
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/emo-bon/momics-demos/HEAD)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/palec87/momics-demos/)
 
-The interactive `jupyterlab` content is all available in this *marine-omics-demos (momics-demos)* [repository](https://github.com/emo-bon/momics-demos). Methods supporting these dashboards are compiled in an additional *marine-omics-methods (momics)* [repository](https://github.com/emo-bon/marine-omics-methods). Dashboards are implemented in [panel](https://panel.holoviz.org/) by Holoviz. The momics-demos repository can be deplyoed to any jupyter server (TODO:fill instructions). To promote ease of first contact, NBs are designed to run locally after cloning the repository, run on `mybinder.org` or in `google colab` environment.
+The interactive `jupyter` content is available in *marine-omics-demos (momics-demos)* [repository](https://github.com/emo-bon/momics-demos). Methods supporting these dashboards are compiled in an additional *marine-omics-methods (momics)* [repository](https://github.com/emo-bon/marine-omics-methods).
+
+Dashboards are implemented in [panel](https://panel.holoviz.org/) by Holoviz. The momics-demos repository can be deplyoed to any jupyter server. To promote ease of first contact, NBs are designed to run locally after cloning the repository, run on `mybinder.org` or in `google colab` environment.
 
 Notebooks can be run as is, and panel widgets combined with your own code, or alternatively design your own workflow ignoring the widgets and using only the `momics-methods`. To serve the dashboard from the NB, click the panel icon
 
 ![panel icon](../assets/figs/panel_icon.png)
 
-## Run locally
+## Run locally or on JupyterHub server
 
 ```bash
 # setup venv (conda example)
@@ -30,7 +39,7 @@ pip install -e .[dependencies]
 # setup jupyterlab kernel
 python -m ipykernel install --user --name momics-demos
 
-# run local server
+# run local server (not applicable for server deployment)
 python -m jupyterlab
 ```
 
