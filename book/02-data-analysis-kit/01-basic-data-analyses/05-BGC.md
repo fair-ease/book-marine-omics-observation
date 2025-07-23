@@ -31,7 +31,7 @@ Dashboard illustrating submission of jobs to galaxy (GECCO tool):
 
 Jupyter NB can be found [here](https://github.com/emo-bon/momics-demos/blob/main/wf3_gene_clusters/bgc_run_gecco_job.ipynb)
 
-![gecco run job](../assets/figs/gecco01.png)
+![gecco run job](../../assets/figs/gecco01.png)
 
 ## Analyze GECCO results
 
@@ -39,7 +39,7 @@ Jupyter NB can be found [here](https://github.com/emo-bon/momics-demos/blob/main
 2. Identifying Biosynthetic Gene Clusters (BGCs).
 3. Visualize BGCs.
 
-![gecco analyze single run](../assets/figs/gecco02.png)
+![gecco analyze single run](../../assets/figs/gecco02.png)
 
 ## Future directions
 

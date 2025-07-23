@@ -13,7 +13,7 @@ Jupyter Notebooks for the dashboards can be found [here](https://github.com/emo-
 
 Provides visualization of alpha and beta diversities of the metaGOflow analyses.
 
-![diversities_simple](../assets/figs/diversity01.png)
+![diversities_simple](../../assets/figs/diversity01.png)
 
 ## Granular Beta diversity dashboard
 
@@ -21,7 +21,7 @@ This dashboard allows to pivot the tasonomy LSU and SSU tables, therefore is com
 
 Tables pivot species according to certain pre-selected taxa. Select, filter and visualize PCoA of the taxonomy in respect to categorical variables. In addition, you can calculate permanova on those subsampled taxonomy selections.
 
-![diversities_simple](../assets/figs/diversity02.png)
+![diversities_simple](../../assets/figs/diversity02.png)
 
 ## Notes
 

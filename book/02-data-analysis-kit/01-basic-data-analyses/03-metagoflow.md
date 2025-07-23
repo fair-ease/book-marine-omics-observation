@@ -13,4 +13,4 @@ There are almost 60 output files from the metaGOflow pipeline. This [dashboard](
 3. Interactive Krona plots from SSU and LSU taxonomy tables, respectively.
 4. Functional annotation summaries expressed in number of reads matched to respective databases.
 
-![metagoflow quality control](../assets/figs/quality_control_01.png)
+![metagoflow quality control](../../assets/figs/quality_control_01.png)

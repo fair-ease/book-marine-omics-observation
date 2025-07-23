@@ -25,7 +25,7 @@ Here is the map of current European marine stations participating in sampling. T
 
 In contrast to the numbers shown, the total number of samplings has reached more than 1000.
 
-![map](../assets/figs/landing_page02.png)
+![map](../../assets/figs/landing_page02.png)
 
 ## Statistics per station
 
