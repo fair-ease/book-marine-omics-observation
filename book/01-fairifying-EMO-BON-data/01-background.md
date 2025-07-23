@@ -43,10 +43,10 @@ Marine Omics Pilot architecture, credits Marc Portier.
 
 DAK provides basic research tools to interogate, visualize and analyse EMO-BON data queried with UDAL. Some have visual interface as a dashboard served from the `Jupyter` notebook or alternatively without the dashbord component as `Jupyter` notebook alone.
 
-Thorough description of the DAK follows in the next chapter [](./02-dak.md).
+Thorough description of the DAK follows in the next chapter [](./03-dak.md).
 
 ## Virtual Research Environment
 
 The full flaged integration of the DAK with access to IDDAS and Galaxy instance is planned for fall 2025 as a VRE prototype on D4Science (BlueCloud infrastructure). In the VRE, it will be possible to leverage both UDAL queries or IDDAS search to retrieve the data.
 
-Details of the VRE are described in chapter [](./03-vre.md)
+Details of the VRE are described in chapter [](./04-vre.md)
