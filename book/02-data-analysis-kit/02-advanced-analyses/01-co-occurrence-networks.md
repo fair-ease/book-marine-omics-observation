@@ -16,7 +16,7 @@ kernelspec:
 
 :::{note} Last update 👈
 :class: dropdown
-David Palecek, June 23, 2025
+David Palecek, August 8, 2025
 :::
 
 Complex networks provide metrics and to identify kestone species bridges/bottleneck species within the community. EMO-BON data are unified in methods but highly diverse in respect to the metadata (sampling station, temperature, season etc.), which can be interpreted as control/treatment. To refrase a particular question in respect to seasonality, is there structural difference in taxonomy buildup in the communities between spring, summer, autumn and winter.
@@ -45,19 +45,13 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-from skbio.stats import subsample_counts
-from skbio.diversity import beta_diversity
 from scipy.stats import spearmanr
-from statsmodels.stats.multitest import multipletests
 import networkx as nx
 
 from momics.taxonomy import (
-    pivot_taxonomic_data,
-    separate_taxonomy)
-from skbio.diversity import beta_diversity
-from momics.taxonomy import (
     remove_high_taxa,
     pivot_taxonomic_data,
+    normalize_abundance,
     prevalence_cutoff,
     rarefy_table,
     split_metadata,
@@ -67,7 +61,19 @@ from momics.taxonomy import (
     fill_taxonomy_placeholders,
     fdr_pvals,
 )
-from momics.networks import interaction_to_graph, interaction_to_graph_with_pvals, pairwise_jaccard_lower_triangle
+from momics.utils import load_and_clean
+from momics.networks import (
+    interaction_to_graph,
+    interaction_to_graph_with_pvals,
+    pairwise_jaccard_lower_triangle,
+    build_interaction_graphs,
+)
+from momics.plotting import plot_network
+from momics.stats import (
+    spearman_from_taxonomy,
+    plot_fdr,
+    plot_association_histogram,
+)
 
 from mgo.udal import UDAL
 
@@ -94,14 +100,11 @@ def get_valid_samples():
 ```
 
 ```{code-cell}
-# Load metadata
-full_metadata = get_metadata_udal()
-
-# filter the metadata only for valid 181 samples
 valid_samples = get_valid_samples()
-full_metadata = enhance_metadata(full_metadata, valid_samples)
 
-mgf_parquet_dfs = load_parquets_udal()
+# load, filter and enhance metadata
+full_metadata, mgf_parquet_dfs = load_and_clean(valid_samples=valid_samples)
+
 ssu = mgf_parquet_dfs['ssu']
 ssu.head()
 ```
@@ -115,15 +118,14 @@ print(full_metadata.shape)
 Batch 1+2 contain 181 valid samples, which should be the first value printed above. Now we convert `object` columns to categorical variables
 
 ```{code-cell}
-for col in full_metadata.columns:
-    # print(full_metadata[col].isinstance(pd.CategoricalDtype()))
-    # check if object dtype
-    if full_metadata[col].dtype == 'object':
-        # convert to categorical
-        full_metadata[col] = full_metadata[col].astype('category')
+# Identify object columns
+categorical_columns = sorted(full_metadata.select_dtypes(include=['object', "boolean"]).columns)
 
-# example how to crosscheck the abve operation
-isinstance(full_metadata['season'].dtype, pd.CategoricalDtype)
+# Convert them all at once to category
+full_metadata = full_metadata.astype({col: 'category' for col in categorical_columns})
+
+if not isinstance(full_metadata['season'].dtype, pd.CategoricalDtype):
+        raise ValueError(f"Column 'season' is not categorical (object dtype).")
 ```
 
 ## 2. Remove high taxa
@@ -152,18 +154,21 @@ print("Filtered DataFrame shape:", ssu.shape)
 Pivoting converts taxonomy table which rows contain each taxon identified in every sample to table with rows of unique taxa with columns representing samples and values of abundances per sample.
 
 ```{code-cell}
-ssu_pivot = pivot_taxonomic_data(ssu_filled, normalize=None, rarefy_depth=None)
+ssu_pivot = pivot_taxonomic_data(ssu_filled)
 ssu_pivot.head()
 ```
 
-The `pivot_taxonomic_data` can normalize or rarefy the table too, but split these steps, because of additional removal of low abundance taxa which needs to happen before normalizing/rarefying.
+:::{note} Tidy data 💡
+:class: dropdown
+This is the step, when we violate tidy data principles, because the abundance is no longer single column (feature) and it is not even clear what the values in the table are now.
+:::
 
 ## 4. Remove low prevalence taxa
 
 The cutoff selected here is 10 %, which means that all taxa which do not appear at least in 10 % of all the samples in the taxonomy table will be removed. This doees not refer to low abundance taxa within single samples.
 
 ```{code-cell}
-ssu_filt = prevalence_cutoff(ssu_pivot, percent=10, skip_columns=2)
+ssu_filt = prevalence_cutoff(ssu_pivot, percent=10, skip_columns=0)
 ssu_filt.head()
 ```
 
@@ -172,25 +177,24 @@ ssu_filt.head()
 Many normalization techniques are readily available to mornalize taxonomy data. For the purposes of co-occurrence networks, it is reccomended to rarefy [refs]. Please correct if wrong.
 
 ```{code-cell}
-ssu_rarefied = ssu_filt.copy()
-ssu_rarefied.iloc[:, 2:] = rarefy_table(ssu_filt.iloc[:, 2:], depth=None, axis=1)
+ssu_rarefied = rarefy_table(ssu_filt, depth=None, axis=1)
 ssu_rarefied.head()
 ```
 
 ## 6. Remove replicates
 
-Anything which has `replicate_info` count > 1 is replicate of some sort. Note that this information comes from the enhanced metadata information, because `replicate_info` is not in the original metadata. It is a combination of `observatory`, `sample type`, `date`, and `filter` information.
+Anything which has `replicate info` count > 1 is replicate of some sort. Note that this information comes from the enhanced metadata information, because `replicate info` is not in the original metadata. It is a combination of `observatory`, `sample type`, `date`, and `filter` information.
 
 It should be considered to filter replicates before steps 4. and 5. Identify replicates:
 
 ```{code-cell}
-full_metadata['replicate_info'].value_counts()
+full_metadata['replicate info'].value_counts()
 ```
 
 Remove the replicates:
 
 ```{code-cell}
-filtered_metadata = full_metadata.drop_duplicates(subset='replicate_info', keep='first')
+filtered_metadata = full_metadata.drop_duplicates(subset='replicate info', keep='first')
 filtered_metadata.shape
 ```
 
@@ -244,34 +248,13 @@ Bray-curtis dissimilarity:
 ```{code-cell}
 bray_taxa = {}
 for factor, df in split_taxonomy.items():
-    bray_taxa[factor] = compute_bray_curtis(df, direction='taxa')
+    bray_taxa[factor] = compute_bray_curtis(df, skip_cols=0, direction='taxa')
 ```
 
 Spearman correlation:
 
 ```{code-cell}
-spearman_taxa = {}
-# Compute Spearman correlation
-for factor, df in split_taxonomy.items():
-    corr, p_spearman = spearmanr(df.iloc[:, 2:].T)
-    assert corr.shape == p_spearman.shape, "Spearman correlation and p-values must have the same shape."
-    corr_df = pd.DataFrame(
-        corr,
-        index=df['ncbi_tax_id'],
-        columns=df['ncbi_tax_id']
-    )
-    p_spearman_df = pd.DataFrame(
-        p_spearman,
-        index=df['ncbi_tax_id'],
-        columns=df['ncbi_tax_id']
-    )
-    d = {
-        'correlation': corr_df,
-        'p_vals': p_spearman_df
-    }
-    spearman_taxa[factor] = d
-    assert spearman_taxa[factor]['correlation'].shape == spearman_taxa[factor]['p_vals'].shape, "Spearman correlation and p-values must have the same shape."
-
+spearman_taxa = spearman_from_taxonomy(split_taxonomy)
 
 spearman_taxa['Summer']['correlation'].head()
 ```
@@ -283,8 +266,9 @@ spearman_taxa['Summer']['correlation'].head()
 We have more than 1000 taxa in the tables, which means 1000*1000 / 2 association values. Too many to statistically trust that any low p-value is not just statistical coincidence. Therefore False Discovery Rate correction is absolutely essential here.
 
 ```{code-cell}
+PVAL = 0.05  # Define a p-value threshold for FDR correction
 for factor, d in spearman_taxa.items():
-    pvals_fdr = fdr_pvals(d['p_vals'], pval_cutoff=0.05)
+    pvals_fdr = fdr_pvals(d['p_vals'], pval_cutoff=PVAL)
     spearman_taxa[factor]['p_vals_fdr'] = pvals_fdr
 ```
 
@@ -300,67 +284,23 @@ spearman_taxa[factor]['correlation'].shape, spearman_taxa[factor]['p_vals'].shap
 For Bray-curtis dissimilarity we plot only the histogram. Does it make sense to do FDR? How?
 
 ```{code-cell}
-# histogram of the correlation values for setting graph cutoffs
-plt.figure(figsize=(10, 5))
-for factor, df in bray_taxa.items():
-    plt.hist(df.values.flatten(), bins=50, alpha=0.5, label=factor, log=True)
-
-plt.title("Histogram of Correlation Values")
-plt.xlabel("Correlation")
-plt.ylabel("Frequency")
-plt.legend()
-plt.show()
+plot_association_histogram(bray_taxa)
 ```
 
 We performed FDR on Spearman's correlations, so both correlation values and FDR curves are displayed.
 
 ```{code-cell}
-# histogram of the correlation values for setting graph cutoffs
-plt.figure(figsize=(10, 5))
-for factor, dict_df in spearman_taxa.items():
-    plt.hist(dict_df['correlation'].values.flatten(), bins=50, alpha=0.5, label=factor, log=True)
-plt.title("Histogram of Correlation Values")
-plt.xlabel("Correlation")
-plt.ylabel("Frequency")
-plt.legend()
-plt.show()
-
-plt.figure(figsize=(10, 5))
-for factor, dict_df in spearman_taxa.items():
-    plt.scatter(
-        dict_df['p_vals'].values.flatten()[::10],  # downsample for better visibility and speed
-        dict_df['p_vals_fdr'].values.flatten()[::10],
-        alpha=0.5,
-        label=factor,
-    )
-plt.axvline(0.05, color='gray', linestyle='--', label='Raw p=0.05')
-plt.axhline(0.05, color='black', linestyle='--', label='FDR p=0.05')
-plt.xlabel('Raw p-value')
-plt.ylabel('FDR-corrected p-value')
-plt.title(f'Comparison of Raw and FDR-corrected p-values for {factor}')
-plt.legend()
-plt.show()
+plot_association_histogram(spearman_taxa)
+plot_fdr(spearman_taxa, PVAL)
 ```
 
-The FDR curve shows huge inflation of significant associations if taken from the raw data. How many?
-
-```{code-cell}
-significant_raw = dict_df['p_vals'].values.flatten() < 0.05
-significant_fdr = dict_df['p_vals_fdr'].values.flatten() < 0.05
-
-removed = np.sum(significant_raw & ~significant_fdr)
-significant = np.sum(significant_fdr)
-
-print(f"Total associations significant before FDR: {np.sum(significant_raw)}")
-print(f"Total associations significant after FDR: {significant}")
-print(f"Associations significant before FDR but not after: {removed}")
-```
+The FDR curve shows huge inflation of significant associations if taken from the raw data. The above print show the stats on how associations got discarded.
 
 ## 10. Build network for each factor value group
 
 ### Nodes and edges for positive and negative associations (Example)
 
-Example of function generating list of nodes and significant positive/negative edges to construct the graph of.
+Code example for generating a list of nodes and significant positive/negative edges to construct the graph from.
 
 ```{code-cell}
 for factor, dict_df in spearman_taxa.items():
@@ -383,49 +323,7 @@ At the same time as we generate the graph, we calculate several descriptive metr
 - `betweenness`, which represents how often a node appears on the shortest paths between other nodes. Taxa with high/low betweenness may act as bridges or bottlenecks in the network, respectively.
 
 ```{code-cell}
-network_results = {}
-for factor, dict_df in spearman_taxa.items():
-    print(f"Factor: {factor}")
-    nodes, edges_pos, edges_neg = interaction_to_graph_with_pvals(
-        dict_df['correlation'],
-        dict_df['p_vals_fdr'],
-        pos_cutoff=0.7,
-        neg_cutoff=-0.5,
-        p_val_cutoff=0.05,
-    )
-
-    G = nx.Graph(
-        mode = factor,
-    )
-
-    G.add_nodes_from(nodes)
-    G.add_edges_from(edges_pos, color='green')
-    G.add_edges_from(edges_neg, color='red')
-
-    network_results[factor] = {
-        "graph": G,
-        "nodes": nodes,
-        "edges_pos": edges_pos,
-        "edges_neg": edges_neg
-    }
-
-    colors = nx.get_edge_attributes(G, 'color')
-
-    degree_centrality = nx.degree_centrality(G)
-
-    network_results[factor]['degree_centrality'] = sorted(degree_centrality.items(),
-                                                          key=lambda x: x[1],
-                                                          reverse=True)[:10]
-    
-    betweenness = nx.betweenness_centrality(G)
-
-    network_results[factor]['top_betweenness'] = sorted(betweenness.items(),
-                                                    key=lambda x: x[1],
-                                                    reverse=True)[:10]
-    network_results[factor]['bottom_betweenness'] = sorted(betweenness.items(),
-                                                           key=lambda x: x[1])[:10]
-    network_results[factor]['total_nodes'] = G.number_of_nodes()
-    network_results[factor]['total_edges'] = G.number_of_edges()
+network_results = build_interaction_graphs(spearman_taxa)
 ```
 
 ### Jaccard similarity of edge sets
@@ -455,31 +353,43 @@ df_jaccard
 
 Compile dataframes from the dictionary. The dataframe structure is not ideal yet, feel free to open a PR [here](https://github.com/fair-ease/book-marine-omics-observation/pulls).
 
+Here are two functions to generate quite silly dataframes of results:
+
 ```{code-cell}
-DF = pd.DataFrame(columns=[FACTOR, 'centrality', 'top_betweenness', 'bottom_betweenness', 'total_nodes', 'total_edges'])
-for factor, dict_results in network_results.items():
-    DF = pd.concat([DF, pd.DataFrame([{
-        FACTOR: factor,
-        'centrality': dict_results['degree_centrality'],
-        'top_betweenness': dict_results['top_betweenness'],
-        'bottom_betweenness': dict_results['bottom_betweenness'],
-        'total_nodes': dict_results['total_nodes'],
-        'total_edges': dict_results['total_edges']
-    }])], ignore_index=True)
-DF.head()
+def network_results_df(network_results, factor_name):
+    out = pd.DataFrame(columns=[factor_name, 'centrality', 'top_betweenness', 'bottom_betweenness', 'total_nodes', 'total_edges'])
+    for factor, dict_results in network_results.items():
+        out = pd.concat([out, pd.DataFrame([{
+            factor_name: factor,
+            'centrality': dict_results['degree_centrality'],
+            'top_betweenness': dict_results['top_betweenness'],
+            'bottom_betweenness': dict_results['bottom_betweenness'],
+            'total_nodes': dict_results['total_nodes'],
+            'total_edges': dict_results['total_edges']
+        }])], ignore_index=True)
+
+    return out
 
 
-df_centrality = pd.DataFrame(columns=[FACTOR, 'node', 'centrality'])
+def create_centrality_dataframe(network_results, factor_name):
+    df_centrality = pd.DataFrame(columns=[factor_name, 'node', 'centrality'])
 
-for factor, dict_results in network_results.items():
-    for node, centrality in dict_results['degree_centrality']:
-        df_centrality = pd.concat([df_centrality, pd.DataFrame({
-            FACTOR: [factor],
+    for factor, dict_results in network_results.items():
+        for node, centrality in dict_results['degree_centrality']:
+            df_centrality = pd.concat([df_centrality, pd.DataFrame({
+            factor_name: [factor],
             'node': [node],
             'centrality': [centrality]
         })], ignore_index=True)
 
-df_centrality
+    return df_centrality
+```
+
+Generate the dataframes
+
+```{code-cell}
+df_results = network_results_df(network_results, FACTOR)
+df_centrality = create_centrality_dataframe(network_results, FACTOR)
 ```
 
 The node identifiers correspond to the NCBI tax_id. Is any node shared in the high centrality table?
@@ -491,29 +401,107 @@ sum(df_centrality['node'].value_counts() > 1)
 Whole table looks like this
 
 ```{code-cell}
-DF.head()
+df_results.head()
 ```
 
 ### Graph example visualization
 
 ```{code-cell}
-alpha = 0.5
-fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-
-for ax, factor in zip(axes, list(bray_taxa.keys())):
-    G = network_results[factor]['graph']
-    colors = nx.get_edge_attributes(G, 'color')
-    pos = nx.spring_layout(G, k=0.2, iterations=50, seed=42)
-    nx.draw_networkx_nodes(G, pos, ax=ax, alpha=alpha, node_color='grey', node_size=17)
-    nx.draw_networkx_edges(G, pos, ax=ax, alpha=alpha-0.3, edge_color=list(colors.values()))
-    ax.set_title(factor)
-    ax.axis('off')
-
-plt.tight_layout()
-plt.show()
+plot_network(network_results, spearman_taxa)
 ```
 
 If you do not do the FDR and remove high taxa, the networks will be hard to distinguis visually, mostly because of all the false positive association hits. Quite surprisingly, out of 1000*1000 tables, we get a clear visual separation of the community interaction patterns.
+
+## Streamline the whole NB
+
+It is now simple to define high-level method which takes dictionary of all the parametres as input and runs all of the above functions.
+
+```{code-cell}
+def network_analysis(params):
+    # prepare metadata
+    if params['drop_metadata_duplicates']:
+        full_metadata = params['metadata'].drop_duplicates(subset='replicate info', keep='first')
+    else:
+        full_metadata = params['metadata']
+
+    ssu_filled = fill_taxonomy_placeholders(params["data"], params["taxonomy_cols"])
+
+    print("Original DataFrame shape:", ssu_filled.shape)
+    ssu_filled = remove_high_taxa(ssu_filled,
+                                  taxonomy_ranks=params["taxonomy_cols"],
+                                  tax_level=params["remove_high_taxa_level"])
+    print("Filtered DataFrame shape:", ssu_filled.shape)
+
+    ssu_pivot = pivot_taxonomic_data(ssu_filled)
+
+    del ssu_filled
+    ssu_filt = prevalence_cutoff(ssu_pivot, percent=params['prevalence_cutoff'], skip_columns=0)
+    del ssu_pivot
+    ssu_rarefied = rarefy_table(ssu_filt, depth=params['rarefy_depth'], axis=1)
+    del ssu_filt
+
+    groups = split_metadata(full_metadata, params['factor'])
+
+    for groups_key in list(groups.keys()):
+        print(f"{groups_key}: {len(groups[groups_key])} samples")
+        if len(groups[groups_key]) < 3:
+            del groups[groups_key]
+            print(f"Warning: {groups_key} has less than 3 samples, therefore removed.")
+
+    split_taxonomy = split_taxonomic_data_pivoted(ssu_rarefied, groups)
+
+    spearman_taxa = spearman_from_taxonomy(split_taxonomy)
+
+    for factor, d in spearman_taxa.items():
+        pvals_fdr = fdr_pvals(d['p_vals'], pval_cutoff=params['fdr_cutoff'])
+        spearman_taxa[factor]['p_vals_fdr'] = pvals_fdr
+
+    plot_fdr(spearman_taxa, params['fdr_cutoff'])
+    plot_association_histogram(spearman_taxa)
+
+    network_results = build_interaction_graphs(
+        spearman_taxa,
+        pos_cutoff=params["network_pos_cutoff"],
+        neg_cutoff=params["network_neg_cutoff"],
+        p_val_cutoff=params["fdr_cutoff"],
+    )
+
+    print('Jaccard Similarity (Positive Edges):')
+    display(pairwise_jaccard_lower_triangle(network_results, edge_type='edges_pos'))
+    print('Jaccard Similarity (Negative Edges):')
+    display(pairwise_jaccard_lower_triangle(network_results, edge_type='edges_neg'))
+    print('Jaccard Similarity (All Edges):')
+    display(pairwise_jaccard_lower_triangle(network_results, edge_type='all'))
+
+    res_df = network_results_df(network_results, params['factor'])
+    display(res_df)
+
+    df_centrality = create_centrality_dataframe(network_results, params['factor'])
+    display(df_centrality)
+
+    plot_network(network_results, spearman_taxa)
+```
+
+Define your inputs and run the whole pipeline
+
+```{code-cell}
+params = {
+    "data": ssu,
+    "metadata": full_metadata,
+    "taxonomy_cols": ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'],
+    "remove_high_taxa_level": 'phylum',
+    'prevalence_cutoff': 10,
+    'rarefy_depth': None,
+    'drop_metadata_duplicates': True,
+    'factor': 'environment (material)',
+    'fdr_cutoff': 0.05,
+    "network_pos_cutoff": 0.5,
+    "network_neg_cutoff": -0.3,
+}
+
+# run everything
+# network_analysis(params)
+```
 
 ## Summary
 
