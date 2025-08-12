@@ -16,7 +16,7 @@ kernelspec:
 
 :::{note} Last update 👈
 :class: dropdown
-David Palecek, July 18, 2025
+David Palecek, August 12, 2025
 :::
 
 Many campaigns have been analysed with MGnify pipeline. EMO-BON data use metaGOflow pipeline, which is a `reads` subworkflow of the MGnify. Therefore the summury tables available at MGnify are directly comparable with the EMO-BON metaGOflow outputs.
@@ -47,12 +47,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # All low level functions are imported from the momics package
-from momics.loader import load_parquets_udal
+from momics.utils import load_and_clean
 
 from momics.taxonomy import (
     fill_taxonomy_placeholders,
     pivot_taxonomic_data,
     prevalence_cutoff,
+    clean_tax_row,
 )
 
 # allows plotting of venn diagrams of 4 sets
@@ -107,9 +108,20 @@ retrieve_summary('MGYS00006680', matching_string='Taxonomic assignments SSU')
 SSU table is used for this demonstration, but the methods shows are agnostic to taxonomic table origin. Metadata are not treated in this example, because their harmonization requires tedious manual work.
 
 ```{code-cell}
+def get_valid_samples():
+    url = "https://raw.githubusercontent.com/emo-bon/momics-demos/refs/heads/main/data/shipment_b1b2_181.csv"
+    df_valid = pd.read_csv(
+        url, header=0, index_col=0,
+    )
+    return df_valid
+
+valid_samples = get_valid_samples()
+
 # load data 
-mgf_parquet_dfs = load_parquets_udal()
-ssu = mgf_parquet_dfs['ssu']
+full_metadata, mgf_parquet_dfs = load_and_clean(valid_samples=valid_samples)
+ssu = mgf_parquet_dfs['ssu'].copy()
+del mgf_parquet_dfs
+
 ssu.head()
 ```
 
@@ -123,42 +135,23 @@ TAXONOMY_RANKS = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family
 
 EMO-BON taxonomy tables
 
-:::{caution} DP, please unify for the future versions.
-:class: dropdown
-This originates in taxonomy methods in marine-omics-methods package. And can be changed.
-:::
-
 ```{code-cell}
-def clean_tax_row(row):
-    """
-    Cleans the taxonomic row by removing empty strings and replacing spaces with underscores.
-    """
-    # replace string with underscores
-    row = row.replace('_', '__')
-    split_row = row.split(';')
-    res = [split_row[1]]
-
-    for tax in split_row[3:]:
-        if tax[-1] == '_':
-            break
-        res.append(tax)
-    
-    return ';'.join(res)
-
 # fill missing higher taxa (usually happens for tentative taxa)
 ssu_filt = fill_taxonomy_placeholders(ssu, TAXONOMY_RANKS)
 
 ## pivot the abundance table
-ssu_filt = pivot_taxonomic_data(ssu_filt, normalize=None, rarefy_depth=None)
+ssu_filt = pivot_taxonomic_data(ssu_filt)
 
-# remove tax id
-ssu_filt = ssu_filt.drop(columns=['ncbi_tax_id'])
-
+# unify taxonomic information to the MGnify
+ssu_filt = ssu_filt.reset_index()
 ssu_filt['taxonomic_concat'] = ssu_filt['taxonomic_concat'].apply(clean_tax_row)
-# rename columns, to agree with the MGnify tables
+
+# unify column and index names
+ssu_filt = ssu_filt.set_index('ncbi_tax_id')
 ssu_filt = ssu_filt.rename(columns={
     'taxonomic_concat': '#SampleID',
 })
+
 ssu_filt.head()
 ```
 
@@ -180,20 +173,6 @@ The list of selected datasets is far from exhausted but includes:
 | MGYS00006714 | Regional and vertical patterns in microbial communities across Fram Strait (2015-2019) |
 
 ```{code-cell}
-def clean_tax_row_mgnify(row):
-    """
-    Cleans the taxonomic row by removing empty strings and replacing spaces with underscores.
-    """
-    split_row = row.split(';')
-    res = [split_row[0]]
-    # print(split_row)
-    for tax in split_row[2:]:
-        if tax[-1] == '_':
-            break
-        res.append(tax)
-    return ';'.join(res)
-
-
 ds_list = {
     'OSD-2018': 'mgnify_data/ERP124424_taxonomy_abundances_SSU_v5.0.tsv',
     'OSD-2019': 'mgnify_data/ERP124431_taxonomy_abundances_SSU_v5.0.tsv',
@@ -213,7 +192,7 @@ for key, value in ds_list.items():
     url = f"https://raw.githubusercontent.com/fair-ease/book-marine-omics-observation/refs/heads/main/book/assets/data/{value}"
     df = pd.read_csv(url, sep="\t", header=0)
     # df = pd.read_csv(os.path.join(data_folder, value), sep='\t')
-    df['#SampleID'] = df['#SampleID'].apply(clean_tax_row_mgnify)
+    df['#SampleID'] = df['#SampleID'].apply(clean_tax_row)
     print(key, f"Dataframe shape (rows, columns): {df.shape}")
     ds[key] = df
 ```
@@ -464,9 +443,60 @@ sets = {
 fig = venny4py(sets=sets)#, out = 'venn4.png')
 ```
 
+## Cummulative taxa discovery along the sampling campaigns
+
+If we consider samplings over time, how do we accumulate identified taxa? Hypothesis is, that if the dependence of discovery is not flattening out, the campaign is heavily undersampling the reality of changing microbiome at the sampling sites over time. To visualize this, below the cummulative taxa is calculated along the collection dates in the case of EMO-BON data, or simply in column order of the other campaigns.
+
+```{code-cell}
+# for other datasets I do not order by date
+res_dict = {}
+for key, ds in ds_normalized.items():
+    cumm_taxa = set()
+    res_dict[key] = [0]
+    for idx in ds.columns[1:].to_list():
+        data = ds[idx]  # single sampling
+        positive_idx = data[data > 0].index.to_list()  # filter the once with abundance
+        cumm_taxa.update(positive_idx)  # add to the set
+        res_dict[key].append(len(cumm_taxa))  # append count which equals to updated set
+
+cumm_taxa = set()
+taxa_count = [0]
+for idx, row in full_metadata['collection date'].sort_values().items():
+
+    data = ds_normalized['EMO-BON'][idx]  # single sampling
+    positive_idx = data[data > 0].index.to_list()  # filter the once with abundance
+    cumm_taxa.update(positive_idx)  # add to the set
+    taxa_count.append(len(cumm_taxa))  # append count which equals to updated set
+
+res_dict['EMO-BON'] = taxa_count
+```
+
+Now it is possible to plot the cummulative taxa-count
+
+```{code-cell}
+for key, taxa_count in res_dict.items():
+    plt.plot(
+        taxa_count,
+        label=key
+    )
+plt.xlabel('Collection date index')
+plt.ylabel('Cumulative number of taxa')
+plt.legend()
+plt.show()
+```
+
+The EMO-BON campaign shows high added value in terms of new taxa being found for repeated sampling events along the time. The discovery rate is in the linear regime of the last 100 samplings.
+
+```{code-cell}
+last_x = 100
+print(f'Steady rate of taxonomic discovery: {(taxa_count[-1] - taxa_count[-last_x-1]) / last_x} taxa per collection date')
+```
+
+It is unclear why that is, but it might be linked to sampling depth of the sequencing, which can be further confirmed.
+
 ## Conclusions
 
-EMO-BON sampling shows superior taxonomic diversity and large proportion of uniquely identified taxa in comparison to the other campaings. Sequencing depth can explain higher `alpha` diversity, which needs to be confirmed manually with other campaing sequencing approaches. Uniquely identified taxa underline the importance and value of long-term diversity sampling campaigns and strong correlation between taxa identified and number of samplings suggests that we are still heavily undersampling the actual diversity.
+EMO-BON sampling shows superior taxonomic diversity and large proportion of uniquely identified taxa in comparison to the other campaings. Sequencing depth can explain higher `alpha` diversity, which needs to be confirmed manually with other campaing sequencing approaches. Uniquely identified taxa underline the importance and value of long-term diversity sampling campaigns. Strong correlation between taxa identified and number of samplings suggests that we are still heavily undersampling the actual diversity. This is also supported by the cummulative taxa identified along the sampling event, which never flatted out.
 
 ## Future prospects
 
