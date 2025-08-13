@@ -30,9 +30,6 @@ IDDAS (Interdisciplinary Data Discovery and Access Services): This metadata cata
 
 The IDDAS uses a DCAT metadata profile, those metadata are fed by the EMO BON RDF metadata triple store to find the dataset records for each of the EMO BON RO-Crates: the logsheet RO-Crates (containing sample data) and the MFG RO-Crates (containing the bioinformatics data and analyses outputs).
 
-
-<!-- ![architecture](../assets/figs/pilot01.png) -->
-
 :::{figure} ../assets/figs/pilot01.png
 :name: mgo-arch
 
